@@ -26,16 +26,29 @@ function logLine(...messages) {
   console.log(...messages);
 }
 let pause = false;
-const MAX_TRY = 3;
+const MAX_TRY = 10;
 let safePauseClock;
-function safePause() {
+function safePause(time = 10e3) {
   pause = true;
+  logLine(chalk`{red.bold 暂停 冷却暂停${(time / 1e3).toFixed(2)}s}`);
   if (safePauseClock) clearTimeout(safePauseClock);
-  setTimeout(() => (pause = false), 15e3);
+  setTimeout(() => (pause = false), time);
 }
+function getSpeedString() {
+  const totalTime = Date.now() - startTime;
+  return chalk`{cyanBright.bold 请求速度 ${(
+    passedTotal /
+    (totalTime / 1e3)
+  ).toFixed(1)} 次/秒 ${(processTotal / (totalTime / 1e3)).toFixed(
+    1
+  )} 线程/秒 成功率 ${((successCount / passedTotal) * 100).toFixed(2)}%}`;
+}
+let successCount = 0;
 async function searchById(id) {
   for (let x = 1; x <= MAX_TRY; x++) {
     processCount++;
+    processTotal++;
+
     try {
       let { data } = await axios.post(
         "https://box3.fun/api/api/content-server-rpc",
@@ -54,6 +67,7 @@ async function searchById(id) {
         },
         { timeout: 1e3 }
       );
+      successCount++;
       const contentData = data.data.data;
       contents.push(contentData);
       writeLine();
@@ -61,12 +75,17 @@ async function searchById(id) {
       logLine(
         chalk`{green 成功} {blue.bold ${id}} {white ${
           contentData.name
-        }} {grey at ${new Date(contentData.created_at).toLocaleString()}}`
+        }} {grey ${new Date(contentData.created_at).toLocaleString()}}`
       );
-      if (MAX_PROCESS < 128) MAX_PROCESS++;
+      if (MAX_PROCESS < 16) MAX_PROCESS++;
+      processCount--;
+      passedTotal++;
       return;
     } catch (e) {
+      processCount--;
+      passedTotal++;
       if (e.response && e.response.status === 400) {
+        // logLine(chalk`{grey 跳过 ${id}} {grey.bold 作品不存在}`);
         return;
       } else if (e.code === "ECONNABORTED" || e.code === "ECONNRESET") {
         // console.log("超时", id);
@@ -74,19 +93,20 @@ async function searchById(id) {
         logLine(chalk`{red 未知错误${String(e)}}`);
         break;
       }
-    } finally {
-      processCount--;
     }
-    logLine(chalk`{grey 重试${x}/${MAX_TRY}} {grey.bold ${id}}`);
-    if (MAX_PROCESS > 1) MAX_PROCESS--;
+    logLine(
+      chalk`{yellowBright 重试 ${id}} {yellowBright.bold 尝试次数 ${x}/${MAX_TRY} }`
+    );
+    if (x > MAX_TRY / 2) safePause();
+    if (MAX_PROCESS > 4) MAX_PROCESS--;
   }
   fileData.error.push(id);
-  logLine(chalk`{red.bold 失败 ${id}}`);
-
-  safePause();
+  logLine(chalk`{red.bold 失败 ${id} 超出重复次数}`);
+  safePause(10e3);
 }
 let MAX_PROCESS = 16;
 let processCount = 0;
+let processTotal = 0;
 function waitMaxProcess() {
   if (processCount < MAX_PROCESS) return new Promise((r) => r());
   else
@@ -100,6 +120,9 @@ function waitMaxProcess() {
     });
 }
 let running = true;
+let passedTotal = 0;
+let startTime = Date.now();
+setInterval(saveData, 300e3);
 async function start() {
   if (fileData.error.length > 0) {
     logLine(chalk`{yellow.bold 正在重试${fileData.error.length}个失败的请求}`);
@@ -119,9 +142,7 @@ async function start() {
     if (!pause) {
       id++;
       searchById(id);
-      writeLine(
-        chalk`{grey 尝试 ${id}} {grey.bold 线程 ${processCount}/${MAX_PROCESS}}`
-      );
+      writeLine(chalk`{white 尝试 ${id}}`);
       await waitMaxProcess();
     } else {
       await new Promise((r) => setTimeout(r, 100));
@@ -130,7 +151,7 @@ async function start() {
           processCount > 0
             ? chalk`{yellow 还有${processCount}个线程在运行}`
             : chalk`{grey 线程已全部停止}`
-        }`
+        } ${getSpeedString()}`
       );
     }
   }
@@ -173,7 +194,7 @@ process.stdin.on("data", (data) => {
     logLine(
       chalk`{white.bold 统计 本次已收集${contents.length}条数据，共收集${
         contents.length + fileData.results.length
-      }条}`
+      }条} {white.bold 线程 ${processCount}/${MAX_PROCESS}} ${getSpeedString()}`
     );
   if (code === 19) saveData();
 });

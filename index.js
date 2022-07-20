@@ -73,11 +73,11 @@ async function searchById(id) {
       writeLine();
       process.stdout.cursorTo(0);
       logLine(
-        chalk`{green 成功} {blue.bold ${id}} {white ${
+        chalk`{green 成功} {grey ${new Date(contentData.created_at).toLocaleString()}} {blue.bold ${id}} {white ${
           contentData.name
-        }} {grey ${new Date(contentData.created_at).toLocaleString()}}`
+        }}`
       );
-      if (MAX_PROCESS < 16) MAX_PROCESS++;
+      if (MAX_PROCESS < 64) MAX_PROCESS++;
       processCount--;
       passedTotal++;
       return;
